@@ -185,7 +185,13 @@ impl YtDlp {
             
             for _ in 0..3 {
                 let mut command = Command::new(&bin);
-                command.args(["--dump-single-json", "--no-warnings", "--skip-download"]);
+                command.args([
+                    "--dump-single-json", 
+                    "--no-warnings", 
+                    "--skip-download",
+                    "--extractor-args",
+                    "youtube:player_client=ios",
+                ]);
                 
                 if let Some(path) = &cookies {
                     command.arg("--cookies");
@@ -309,6 +315,8 @@ impl YtDlp {
             "--restrict-filenames".to_string(),
             "-o".to_string(),
             template,
+            "--extractor-args".to_string(),
+            "youtube:player_client=ios".to_string(),
         ];
 
         if let Some(path) = &self.cookies {
@@ -522,10 +530,10 @@ fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
 }
 
 async fn fetch_spotify_title(url: &str) -> Result<String> {
-    let oembed_url = format!("https://open.spotify.com/oembed?url={}", url);
     let client = reqwest::Client::new();
     let response = client
-        .get(&oembed_url)
+        .get("https://open.spotify.com/oembed")
+        .query(&[("url", url)])
         .send()
         .await
         .context("failed to fetch Spotify oEmbed")?;
