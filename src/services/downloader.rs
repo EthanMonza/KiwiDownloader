@@ -299,7 +299,7 @@ impl YtDlp {
             .to_string_lossy()
             .into_owned();
 
-        let args = vec![
+        let mut args = vec![
             "--no-warnings".to_string(),
             "--no-colors".to_string(),
             "--newline".to_string(),
