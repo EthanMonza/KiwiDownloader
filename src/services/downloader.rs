@@ -28,6 +28,7 @@ pub enum Source {
     TikTok,
     Instagram,
     Pinterest,
+    Spotify,
 }
 
 impl Source {
@@ -49,6 +50,9 @@ impl Source {
         }
         if host == "pin.it" || is_domain_or_subdomain(&host, "pinterest.com") {
             return Ok(Self::Pinterest);
+        }
+        if is_domain_or_subdomain(&host, "spotify.com") {
+            return Ok(Self::Spotify);
         }
 
         bail!("unsupported media source")
@@ -146,17 +150,35 @@ impl YtDlpFormat {
 pub struct YtDlp {
     bin: String,
     download_root: PathBuf,
+    cookies: Option<String>,
 }
 
 impl YtDlp {
-    pub fn new(bin: String, download_root: PathBuf) -> Self {
-        Self { bin, download_root }
+    pub fn new(
+        bin: String,
+        download_root: PathBuf,
+        cookies: Option<String>,
+    ) -> Self {
+        Self {
+            bin,
+            download_root,
+            cookies,
+        }
     }
 
     pub async fn probe(&self, raw_url: &str) -> Result<MediaInfo> {
-        let source = Source::from_url(raw_url)?;
-        let url = raw_url.trim().to_string();
+        let mut source = Source::from_url(raw_url)?;
+        let mut url = raw_url.trim().to_string();
+        
+        if source == Source::Spotify {
+            let title = fetch_spotify_title(&url).await?;
+            url = format!("ytsearch1:{}", title);
+            // After re-mapping to YouTube search, we treat it as YouTube
+            source = Source::YouTube;
+        }
+
         let bin = self.bin.clone();
+        let cookies = self.cookies.clone();
 
         let raw = task::spawn_blocking(move || -> Result<YtDlpInfo> {
             let mut last_error = String::new();
@@ -164,6 +186,12 @@ impl YtDlp {
             for _ in 0..3 {
                 let mut command = Command::new(&bin);
                 command.args(["--dump-single-json", "--no-warnings", "--skip-download"]);
+                
+                if let Some(path) = &cookies {
+                    command.arg("--cookies");
+                    command.arg(path);
+                }
+
                 if source != Source::Instagram {
                     command.arg("--no-playlist");
                 }
@@ -192,6 +220,13 @@ impl YtDlp {
         progress: ProgressSender,
     ) -> Result<DownloadedSet> {
         let source = Source::from_url(raw_url)?;
+        let mut url = raw_url.to_string();
+
+        if source == Source::Spotify {
+            let title = fetch_spotify_title(&url).await?;
+            url = format!("ytsearch1:{}", title);
+        }
+
         let (work_dir, mut args) = self.base_download_args().await?;
         args.extend([
             "--extract-audio".to_string(),
@@ -200,10 +235,10 @@ impl YtDlp {
             "--audio-quality".to_string(),
             "0".to_string(),
         ]);
-        if source != Source::Instagram {
+        if source != Source::Instagram && source != Source::Spotify {
             args.push("--no-playlist".to_string());
         }
-        args.push(raw_url.to_string());
+        args.push(url);
 
         self.run_download(work_dir, args, progress).await
     }
@@ -216,6 +251,13 @@ impl YtDlp {
         progress: ProgressSender,
     ) -> Result<DownloadedSet> {
         let source = Source::from_url(raw_url)?;
+        let mut url = raw_url.to_string();
+
+        if source == Source::Spotify {
+            let title = fetch_spotify_title(&url).await?;
+            url = format!("ytsearch1:{}", title);
+        }
+
         let (work_dir, mut args) = self.base_download_args().await?;
 
         if carousel {
@@ -224,7 +266,7 @@ impl YtDlp {
             args.extend([
                 "--merge-output-format".to_string(),
                 "mp4".to_string(),
-                raw_url.to_string(),
+                url,
             ]);
         } else if source == Source::Pinterest {
             // Pinterest serves single-format media; strict format selectors
@@ -233,7 +275,7 @@ impl YtDlp {
                 "--merge-output-format".to_string(),
                 "mp4".to_string(),
                 "--no-playlist".to_string(),
-                raw_url.to_string(),
+                url,
             ]);
         } else {
             args.extend([
@@ -242,7 +284,7 @@ impl YtDlp {
                 "--merge-output-format".to_string(),
                 "mp4".to_string(),
                 "--no-playlist".to_string(),
-                raw_url.to_string(),
+                url,
             ]);
         }
 
@@ -268,6 +310,11 @@ impl YtDlp {
             "-o".to_string(),
             template,
         ];
+
+        if let Some(path) = &self.cookies {
+            args.push("--cookies".to_string());
+            args.push(path.clone());
+        }
 
         Ok((work_dir, args))
     }
@@ -472,4 +519,25 @@ fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn fetch_spotify_title(url: &str) -> Result<String> {
+    let oembed_url = format!("https://open.spotify.com/oembed?url={}", url);
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&oembed_url)
+        .send()
+        .await
+        .context("failed to fetch Spotify oEmbed")?;
+
+    if !response.status().is_success() {
+        bail!("Spotify oEmbed returned error: {}", response.status());
+    }
+
+    let data: serde_json::Value = response.json().await.context("failed to parse Spotify oEmbed JSON")?;
+    let title = data["title"]
+        .as_str()
+        .ok_or_else(|| anyhow!("Spotify oEmbed JSON missing title"))?;
+
+    Ok(title.to_string())
 }

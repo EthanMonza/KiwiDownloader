@@ -8,6 +8,7 @@ pub struct Config {
     pub database_url: String,
     pub download_dir: PathBuf,
     pub yt_dlp_bin: String,
+    pub yt_dlp_cookies: Option<String>,
 }
 
 impl Config {
@@ -23,12 +24,22 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("downloads"));
         let yt_dlp_bin = env::var("YT_DLP_BIN").unwrap_or_else(|_| "yt-dlp".to_string());
+        let yt_dlp_cookies = env::var("YT_DLP_COOKIES")
+            .ok()
+            .or_else(|| {
+                if std::path::Path::new("cookies.txt").exists() {
+                    Some("cookies.txt".to_string())
+                } else {
+                    None
+                }
+            });
 
         Ok(Self {
             telegram_bot_token,
             database_url,
             download_dir,
             yt_dlp_bin,
+            yt_dlp_cookies,
         })
     }
 }

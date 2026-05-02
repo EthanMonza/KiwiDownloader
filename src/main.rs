@@ -31,7 +31,11 @@ async fn main() -> Result<()> {
     db.migrate().await?;
 
     let i18n = Arc::new(I18n::new()?);
-    let downloader = Arc::new(YtDlp::new(config.yt_dlp_bin, config.download_dir));
+    let downloader = Arc::new(YtDlp::new(
+        config.yt_dlp_bin,
+        config.download_dir,
+        config.yt_dlp_cookies,
+    ));
     let state = Arc::new(BotState::default());
 
     log::info!("Starting Kiwi Downloader bot");
