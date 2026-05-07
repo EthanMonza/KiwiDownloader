@@ -18,6 +18,21 @@ use crate::{
     services::downloader::YtDlp,
 };
 
+async fn update_ytdlp(bin_path: &str) -> Result<()> {
+    log::info!("Updating yt-dlp...");
+    let output = tokio::process::Command::new(bin_path)
+        .arg("-U")
+        .output()
+        .await?;
+        
+    if output.status.success() {
+        log::info!("yt-dlp updated successfully.");
+    } else {
+        log::warn!("Failed to update yt-dlp: {}", String::from_utf8_lossy(&output.stderr));
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
@@ -25,6 +40,10 @@ async fn main() -> Result<()> {
 
     let config = Config::from_env()?;
     tokio::fs::create_dir_all(&config.download_dir).await?;
+
+    if let Err(e) = update_ytdlp(&config.yt_dlp_bin).await {
+        log::warn!("yt-dlp update error: {}", e);
+    }
 
     let bot = Bot::new(config.telegram_bot_token.clone());
     let db = Arc::new(CacheDb::connect(&config.database_url).await?);

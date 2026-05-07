@@ -191,6 +191,8 @@ impl YtDlp {
                     "--skip-download",
                     "--extractor-args",
                     "youtube:player_client=ios",
+                    "--username", "oauth2",
+                    "--password", "",
                 ]);
                 
                 if let Some(path) = &cookies {
@@ -317,6 +319,10 @@ impl YtDlp {
             template,
             "--extractor-args".to_string(),
             "youtube:player_client=ios".to_string(),
+            "--username".to_string(),
+            "oauth2".to_string(),
+            "--password".to_string(),
+            "".to_string(),
         ];
 
         if let Some(path) = &self.cookies {
@@ -529,23 +535,24 @@ fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+use rspotify::{prelude::*, ClientCredsSpotify, Credentials};
+
 async fn fetch_spotify_title(url: &str) -> Result<String> {
-    let client = reqwest::Client::new();
-    let response = client
-        .get("https://open.spotify.com/oembed")
-        .query(&[("url", url)])
-        .send()
-        .await
-        .context("failed to fetch Spotify oEmbed")?;
+    let creds = Credentials::from_env()
+        .ok_or_else(|| anyhow::anyhow!("Missing Spotify credentials (SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)"))?;
+    let spotify = ClientCredsSpotify::new(creds);
+    spotify.request_token().await.context("Failed to get Spotify token")?;
 
-    if !response.status().is_success() {
-        bail!("Spotify oEmbed returned error: {}", response.status());
-    }
+    let track_id_str = url.split("track/").nth(1).and_then(|s| s.split('?').next())
+        .ok_or_else(|| anyhow::anyhow!("Invalid Spotify track URL: {}", url))?;
+    let track_id = rspotify::model::TrackId::from_id(track_id_str)
+        .context("Invalid Spotify track ID format")?;
 
-    let data: serde_json::Value = response.json().await.context("failed to parse Spotify oEmbed JSON")?;
-    let title = data["title"]
-        .as_str()
-        .ok_or_else(|| anyhow!("Spotify oEmbed JSON missing title"))?;
-
-    Ok(title.to_string())
+    let track = spotify.track(track_id, None).await
+        .context("Failed to fetch track from Spotify API")?;
+    
+    let artist_names: Vec<String> = track.artists.into_iter().map(|a| a.name).collect();
+    let query = format!("{} - {}", artist_names.join(", "), track.name);
+    
+    Ok(query)
 }
