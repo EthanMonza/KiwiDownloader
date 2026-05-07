@@ -191,8 +191,6 @@ impl YtDlp {
                     "--skip-download",
                     "--extractor-args",
                     "youtube:player_client=ios",
-                    "--username", "oauth2",
-                    "--password", "",
                 ]);
                 
                 if let Some(path) = &cookies {
@@ -319,10 +317,6 @@ impl YtDlp {
             template,
             "--extractor-args".to_string(),
             "youtube:player_client=ios".to_string(),
-            "--username".to_string(),
-            "oauth2".to_string(),
-            "--password".to_string(),
-            "".to_string(),
         ];
 
         if let Some(path) = &self.cookies {
@@ -535,24 +529,26 @@ fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-use rspotify::{prelude::*, ClientCredsSpotify, Credentials};
-
 async fn fetch_spotify_title(url: &str) -> Result<String> {
-    let creds = Credentials::from_env()
-        .ok_or_else(|| anyhow::anyhow!("Missing Spotify credentials (SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)"))?;
-    let spotify = ClientCredsSpotify::new(creds);
-    spotify.request_token().await.context("Failed to get Spotify token")?;
-
-    let track_id_str = url.split("track/").nth(1).and_then(|s| s.split('?').next())
-        .ok_or_else(|| anyhow::anyhow!("Invalid Spotify track URL: {}", url))?;
-    let track_id = rspotify::model::TrackId::from_id(track_id_str)
-        .context("Invalid Spotify track ID format")?;
-
-    let track = spotify.track(track_id, None).await
-        .context("Failed to fetch track from Spotify API")?;
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .build()?;
     
-    let artist_names: Vec<String> = track.artists.into_iter().map(|a| a.name).collect();
-    let query = format!("{} - {}", artist_names.join(", "), track.name);
+    let html = client.get(url).send().await?.text().await?;
     
-    Ok(query)
+    let start_tag = "<title>";
+    let end_tag = "</title>";
+    
+    if let Some(start_idx) = html.find(start_tag) {
+        if let Some(end_idx) = html[start_idx..].find(end_tag) {
+            let title = &html[start_idx + start_tag.len() .. start_idx + end_idx];
+            let clean_title = title
+                .replace(" | Spotify", "")
+                .replace(" - song and lyrics by ", " - ")
+                .replace(" - song by ", " - ");
+            return Ok(clean_title);
+        }
+    }
+    
+    bail!("Failed to extract title from Spotify page")
 }
